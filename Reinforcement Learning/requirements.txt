@@ -1,0 +1,79 @@
+# =============================================================================
+# Dependencias para Reinforcement Learning
+# =============================================================================
+
+# Core
+gymnasium>=0.29.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+torch>=2.0.0
+tqdm>=4.65.0
+pygame>=2.5.0
+
+# Stable-Baselines3 (algoritmos de RL de alto nivel)
+stable-baselines3>=2.0.0
+
+# =============================================================================
+# Entornos adicionales
+# =============================================================================
+
+# Box2D (LunarLander, BipedalWalker)
+# pip install gymnasium[box2d]
+# o instalar swig primero: pip install swig
+box2d-py>=2.3.8
+
+# Atari (Breakout, Pong, Space Invaders...)
+# pip install gymnasium[atari]
+# pip install gymnasium[accept-rom-license]
+ale-py>=0.8.1
+
+# MiniGrid (laberintos 2D)
+minigrid>=2.3.0
+
+# Flappy Bird
+flappy-bird-gymnasium>=0.3.0
+
+# Highway-Env (conducción autónoma)
+highway-env>=1.8.0
+
+# PyBullet (robótica 3D)
+pybullet>=3.2.5
+
+# MuJoCo (alternativa a PyBullet, ahora gratuito)
+# pip install mujoco
+# mujoco>=3.0.0
+
+# =============================================================================
+# Herramientas de monitoreo (opcional)
+# =============================================================================
+
+# TensorBoard (visualización de entrenamiento)
+tensorboard>=2.14.0
+
+# Weights & Biases (logging en la nube)
+# wandb>=0.15.0
+
+# =============================================================================
+# Instalación rápida por proyecto
+# =============================================================================
+#
+# LunarLander (el más simple):
+#   pip install gymnasium[box2d] stable-baselines3
+#
+# MiniGrid (laberintos):
+#   pip install minigrid stable-baselines3
+#
+# Flappy Bird:
+#   pip install flappy-bird-gymnasium stable-baselines3
+#
+# Highway (conducción):
+#   pip install highway-env stable-baselines3
+#
+# PyBullet/MuJoCo (robótica):
+#   pip install pybullet stable-baselines3
+#   # o
+#   pip install mujoco stable-baselines3
+#
+# TODO (instalar todo):
+#   pip install -r requirements.txt
+# =============================================================================
