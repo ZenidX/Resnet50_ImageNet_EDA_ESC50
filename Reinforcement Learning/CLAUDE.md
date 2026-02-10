@@ -1,38 +1,77 @@
 # Reinforcement Learning
 
-Materiales completos para aprender Reinforcement Learning con proyectos visuales.
+Materiales completos para aprender Reinforcement Learning, organizados por nivel de complejidad.
 
-## Estructura
+## Estructura del Directorio
 
 ```
 Reinforcement Learning/
-├── CLAUDE.md                              # Esta documentación
-├── requirements.txt                       # Dependencias
-├── reinforcement_learning_clase.ipynb     # Notebook principal con teoría
 │
-├── core/                                  # Implementaciones base
-│   ├── __init__.py
-│   ├── agentes.py                         # Q-Learning, SARSA, DQN
-│   └── utils.py                           # Gráficos, métricas
+├── 01_teoria/                                    # NIVEL 1: Fundamentos teóricos
+│   ├── reinforcement_learning_clase.ipynb        # Notebook principal con toda la teoría
+│   └── recorrido_proyectos_rl.ipynb              # Guía que relaciona teoría con proyectos
 │
-├── ejemplos/                              # Ejemplos básicos
-│   ├── ejemplo_cartpole_dqn.py            # DQN en CartPole
-│   └── ejemplo_qlearning_taxi.py          # Q-Learning en Taxi
+├── 02_fundamentos/                               # NIVEL 2: Implementaciones base
+│   ├── core/                                     # Módulo con algoritmos
+│   │   ├── __init__.py
+│   │   ├── agentes.py                            # Q-Learning, SARSA, DQN
+│   │   └── utils.py                              # Gráficos, métricas
+│   └── ejemplos/                                 # Tutoriales básicos
+│       ├── ejemplo_cartpole_dqn.py               # DQN en CartPole
+│       └── ejemplo_qlearning_taxi.py             # Q-Learning en Taxi
 │
-├── modelos/                               # Modelos guardados
+├── 03_proyectos_dqn/                             # NIVEL 3: Proyectos con DQN
+│   ├── nibbler/                                  # Snake con DQN + Pygame
+│   │   ├── nibbler_game.py
+│   │   └── nibbler_rl.ipynb
+│   ├── flappybird/                               # Flappy Bird
+│   │   └── flappybird_dqn.py
+│   └── racing/                                   # Carreras multi-agente
+│       └── racing_game.py
+│
+├── 04_proyectos_avanzados/                       # NIVEL 4: Algoritmos avanzados (PPO, SAC)
+│   ├── lunarlander/                              # LunarLander con Stable-Baselines3
+│   │   └── lunarlander_sb3.py
+│   ├── highway/                                  # Conducción autónoma
+│   │   └── highway_conduccion.py
+│   ├── minigrid/                                 # Laberintos 2D
+│   │   └── minigrid_navegacion.py
+│   └── pybullet/                                 # Robótica 3D
+│       └── pybullet_robotica.py
+│
+├── modelos/                                      # Modelos entrenados (.pth)
 │   ├── cartpole_dqn.pth
 │   ├── nibbler_best.pth
-│   ├── car_agent_*.pth
-│   └── *_training.png                     # Gráficas de entrenamiento
+│   └── car_agent_*.pth
 │
-└── proyectos/                             # Proyectos visuales
-    ├── lunarlander/                       # LunarLander con SB3
-    ├── minigrid/                          # Laberintos 2D
-    ├── flappybird/                        # Flappy Bird
-    ├── highway/                           # Conducción autónoma
-    ├── pybullet/                          # Robótica 3D
-    ├── nibbler/                           # Snake con DQN
-    └── racing/                            # Carreras multi-agente
+├── requirements.txt                              # Dependencias
+└── CLAUDE.md                                     # Esta documentación
+```
+
+## Mapa de Aprendizaje
+
+```
+TEORÍA                           PRÁCTICA
+──────                           ────────
+
+Conceptos Básicos ──────────────► 02_fundamentos/core/agentes.py
+  • Agente, Entorno, Estado         (QLearningAgent, SARSAAgent)
+  • Política, Recompensa
+  • ε-greedy
+
+Q-Learning Tabular ─────────────► 02_fundamentos/ejemplos/ejemplo_qlearning_taxi.py
+  • Tabla Q                         (Taxi-v3: 500 estados discretos)
+  • Ecuación de Bellman
+
+DQN ────────────────────────────► 02_fundamentos/ejemplos/ejemplo_cartpole_dqn.py
+  • Red neuronal para Q             03_proyectos_dqn/nibbler/
+  • Experience Replay               03_proyectos_dqn/flappybird/
+  • Target Network                  03_proyectos_dqn/racing/
+
+Algoritmos Avanzados ───────────► 04_proyectos_avanzados/
+  • PPO (Policy Gradient)           lunarlander/ (PPO, A2C, DQN)
+  • SAC/TD3 (Continuo)              highway/ (DQN, PPO)
+                                    pybullet/ (SAC, TD3)
 ```
 
 ## Instalación
@@ -53,62 +92,79 @@ pip install pybullet                # Robótica 3D
 
 ## Uso Rápido
 
-### Ejemplos básicos
+### Nivel 1: Teoría
 ```bash
-cd ejemplos
-python ejemplo_cartpole_dqn.py      # DQN en CartPole
-python ejemplo_qlearning_taxi.py    # Q-Learning en Taxi
+# Abrir notebooks de teoría
+jupyter notebook 01_teoria/reinforcement_learning_clase.ipynb
+jupyter notebook 01_teoria/recorrido_proyectos_rl.ipynb
 ```
 
-### Proyectos
+### Nivel 2: Fundamentos
 ```bash
-# LunarLander (el más visual)
-cd proyectos/lunarlander
-python lunarlander_sb3.py           # Entrenar
-python lunarlander_sb3.py --demo    # Ver agente
+cd 02_fundamentos/ejemplos
+python ejemplo_qlearning_taxi.py      # Q-Learning tabular
+python ejemplo_cartpole_dqn.py        # DQN básico
+```
 
+### Nivel 3: Proyectos DQN
+```bash
 # Nibbler (Snake)
-cd proyectos/nibbler
-python nibbler_game.py              # Jugar
-python nibbler_game.py --train      # Entrenar
+cd 03_proyectos_dqn/nibbler
+python nibbler_game.py                # Jugar manualmente
+python nibbler_game.py --train        # Entrenar agente
 
 # Racing (multi-agente)
-cd proyectos/racing
-python racing_game.py               # Ver coches
-python racing_game.py --train       # Entrenar
+cd 03_proyectos_dqn/racing
+python racing_game.py                 # Ver coches
+python racing_game.py --train         # Entrenar
+
+# Flappy Bird
+cd 03_proyectos_dqn/flappybird
+python flappybird_dqn.py
 ```
 
-## Proyectos Visuales
+### Nivel 4: Proyectos Avanzados
+```bash
+# LunarLander (requiere gymnasium[box2d])
+cd 04_proyectos_avanzados/lunarlander
+python lunarlander_sb3.py             # Entrenar
+python lunarlander_sb3.py --demo      # Ver agente
 
-| Proyecto | Descripción | Comando rápido |
-|----------|-------------|----------------|
-| **LunarLander** | Aterrizar nave espacial | `python lunarlander_sb3.py` |
-| **MiniGrid** | Navegar laberintos | `python minigrid_navegacion.py` |
-| **Flappy Bird** | Pasar tubos | `python flappybird_dqn.py` |
-| **Highway** | Conducción autónoma | `python highway_conduccion.py` |
-| **PyBullet** | Robots 3D caminando | `python pybullet_robotica.py` |
-| **Nibbler** | Snake con DQN | `python nibbler_game.py` |
-| **Racing** | Carreras multi-agente | `python racing_game.py` |
+# Highway (requiere highway-env)
+cd 04_proyectos_avanzados/highway
+python highway_conduccion.py
 
-## Código Mínimo (5 líneas)
+# MiniGrid (requiere minigrid)
+cd 04_proyectos_avanzados/minigrid
+python minigrid_navegacion.py
 
-```python
-from stable_baselines3 import PPO
-import gymnasium as gym
-
-env = gym.make("LunarLander-v3", render_mode="human")
-model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=50_000)
+# PyBullet (requiere pybullet)
+cd 04_proyectos_avanzados/pybullet
+python pybullet_robotica.py
 ```
 
-## Algoritmos Disponibles
+## Resumen de Proyectos
 
-### En `core/agentes.py`:
+| Nivel | Proyecto | Algoritmo | Descripción |
+|-------|----------|-----------|-------------|
+| 2 | Taxi | Q-Learning | Estados discretos, tabla Q |
+| 2 | CartPole | DQN | Estados continuos, red neuronal |
+| 3 | Nibbler | DQN | Snake con Pygame, DQN desde cero |
+| 3 | Flappy Bird | DQN/PPO | Timing crítico |
+| 3 | Racing | DQN | Multi-agente, sensores |
+| 4 | LunarLander | PPO/DQN/A2C | Stable-Baselines3 |
+| 4 | Highway | DQN/PPO | Conducción autónoma |
+| 4 | MiniGrid | PPO | Observación parcial, wrappers |
+| 4 | PyBullet | SAC/TD3 | Robótica 3D, acciones continuas |
+
+## Algoritmos por Ubicación
+
+### En `02_fundamentos/core/agentes.py`:
 - **Q-Learning**: Estados discretos, tabular
 - **SARSA**: On-policy, más conservador
 - **DQN**: Deep Q-Network para estados continuos
 
-### En Stable-Baselines3:
+### En proyectos con Stable-Baselines3:
 - **PPO**: General, robusto (recomendado)
 - **DQN**: Acciones discretas
 - **SAC/TD3**: Acciones continuas, robótica
