@@ -8,7 +8,8 @@ Materiales completos para aprender Reinforcement Learning, organizados por nivel
 Reinforcement Learning/
 │
 ├── 01_teoria/                                    # NIVEL 1: Fundamentos teóricos
-│   ├── reinforcement_learning_clase.ipynb        # Notebook principal con toda la teoría
+│   ├── reinforcement_learning_clase.ipynb        # Notebook 1: Teoría y algoritmos base
+│   ├── reinforcement_learning_clase2.ipynb       # Notebook 2: Stable-Baselines3
 │   └── recorrido_proyectos_rl.ipynb              # Guía que relaciona teoría con proyectos
 │
 ├── 02_fundamentos/                               # NIVEL 2: Implementaciones base
@@ -95,8 +96,9 @@ pip install pybullet                # Robótica 3D
 ### Nivel 1: Teoría
 ```bash
 # Abrir notebooks de teoría
-jupyter notebook 01_teoria/reinforcement_learning_clase.ipynb
-jupyter notebook 01_teoria/recorrido_proyectos_rl.ipynb
+jupyter notebook 01_teoria/reinforcement_learning_clase.ipynb   # Fundamentos, SARSA, Q-Learning, DQN
+jupyter notebook 01_teoria/reinforcement_learning_clase2.ipynb  # Stable-Baselines3, PPO, SAC
+jupyter notebook 01_teoria/recorrido_proyectos_rl.ipynb         # Mapa teoría → proyectos
 ```
 
 ### Nivel 2: Fundamentos
