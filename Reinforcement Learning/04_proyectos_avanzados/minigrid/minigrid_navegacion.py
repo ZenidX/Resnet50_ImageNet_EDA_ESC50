@@ -4,14 +4,22 @@ MiniGrid - Navegación en Laberintos 2D
 Entorno de cuadrícula donde el agente aprende a navegar,
 abrir puertas y recoger objetos.
 
+VARIANTES:
+  A — MLP + Flat (--variant flat):   Vector aplanado, sin estructura espacial
+  B — CNN        (--variant cnn):    CNN que aprovecha la estructura de la imagen
+  C — Curriculum (--curriculum):     Empty → FourRooms → DoorKey → LavaCrossing
+
 Instalación:
     pip install minigrid stable-baselines3
 
 Uso:
-    python minigrid_navegacion.py                    # Entrenar
-    python minigrid_navegacion.py --demo             # Ver agente
-    python minigrid_navegacion.py --env DoorKey      # Otro entorno
-    python minigrid_navegacion.py --manual           # Jugar manualmente
+    python minigrid_navegacion.py                     # Entrenar (var. B por defecto)
+    python minigrid_navegacion.py --variant flat      # Var. A: MLP
+    python minigrid_navegacion.py --variant cnn       # Var. B: CNN
+    python minigrid_navegacion.py --curriculum        # Var. C: curriculum
+    python minigrid_navegacion.py --demo              # Ver agente
+    python minigrid_navegacion.py --env DoorKey       # Otro entorno
+    python minigrid_navegacion.py --manual            # Jugar manualmente
 """
 
 import argparse
@@ -173,12 +181,84 @@ def crear_entorno(nombre="Empty", render=False):
     return env
 
 
+def entrenar_flat(env_name="Empty", timesteps=50000, algorithm="PPO"):
+    """
+    Variante A: PPO/DQN con observación APLANADA (MLP).
+
+    La imagen 7×7×3 del agente se aplana a un vector de 147 valores.
+    Se usa una red neuronal densa (MLP) para aprender la política.
+
+    Desventaja: el MLP no aprovecha la estructura espacial de la imagen.
+    No sabe que los píxeles adyacentes están relacionados espacialmente.
+
+    Ejecutar: python minigrid_navegacion.py --variant flat
+    """
+    print(f"\n{'='*60}")
+    print(f"  Variante A: MLP + Observación Plana")
+    print(f"  Entorno: {env_name} | Algoritmo: {algorithm}")
+    print(f"  Observación: 7×7×3 = 147 valores aplanados")
+    print(f"  Red: MLP (sin estructura espacial)")
+    print(f"  Timesteps: {timesteps:,}")
+    print(f"{'='*60}\n")
+
+    env_id = ENTORNOS.get(env_name, env_name)
+    env = gym.make(env_id)
+    env = FlatObsWrapper(env)  # Aplana la imagen
+
+    if algorithm == "PPO":
+        model = PPO(
+            "MlpPolicy",  # Red densa
+            env,
+            verbose=1,
+            learning_rate=0.0003,
+            n_steps=128,
+            batch_size=64,
+            n_epochs=4,
+            gamma=0.99,
+            ent_coef=0.01,
+            policy_kwargs={"net_arch": [256, 256]},  # MLP simple
+        )
+    else:
+        model = DQN(
+            "MlpPolicy",
+            env,
+            verbose=1,
+            learning_rate=0.0001,
+            buffer_size=50000,
+            learning_starts=1000,
+            batch_size=32,
+            gamma=0.99,
+            policy_kwargs={"net_arch": [256, 256]},
+        )
+
+    callback = MinigridCallback()
+    model.learn(total_timesteps=timesteps, callback=callback, progress_bar=True)
+
+    save_path = f"minigrid_{env_name.lower()}_flat_{algorithm.lower()}"
+    model.save(save_path)
+    print(f"\nModelo guardado: {save_path}.zip")
+    env.close()
+    return model, callback
+
+
 def entrenar_minigrid(env_name="Empty", timesteps=50000, algorithm="PPO"):
     """
-    Entrena un agente en un entorno de MiniGrid.
+    Variante B: PPO/DQN con CNN personalizada (MinigridCNN).
+
+    Usa convoluciones para procesar la imagen 7×7×3, preservando
+    la estructura espacial. La CNN aprende qué características
+    visuales son relevantes (paredes, puertas, objetos).
+
+    Ventaja vs Variante A: entiende relaciones espaciales entre píxeles.
+
+    Arquitectura CNN:
+        Conv2d(3→16, k=2) → Conv2d(16→32, k=2) → Conv2d(32→64, k=2)
+        → Flatten → Linear(64) → política
+
+    Ejecutar: python minigrid_navegacion.py --variant cnn
 
     Args:
-        env_name: Nombre del entorno
+        env_name: Nombre del entorno (ver ENTORNOS)
         timesteps: Pasos de entrenamiento
         algorithm: "PPO" o "DQN"
 
@@ -392,10 +472,167 @@ def plot_training(callback, save_path="minigrid_training.png"):
     print(f"Gráfica guardada: {save_path}")
 
 
+def curriculum_minigrid(timesteps_por_nivel=30000, algorithm="PPO"):
+    """
+    Variante C: Curriculum Learning en MiniGrid.
+
+    El agente aprende navegación progresivamente, comenzando por
+    entornos simples y avanzando a más complejos.
+
+    Progresión:
+      1. Empty-5x5     — Solo ir a la meta (trivial)
+      2. Empty-8x8     — Meta más lejos
+      3. FourRooms     — Navegar entre habitaciones
+      4. DoorKey       — Encontrar llave y abrir puerta
+      5. LavaCrossing  — Evitar obstáculos de lava
+
+    Cada nivel transfiere los pesos al siguiente entorno.
+    El agente acumula habilidades: primero navega, luego gestiona
+    objetos, finalmente evita peligros.
+
+    Ejecutar: python minigrid_navegacion.py --curriculum
+    """
+    curriculum = [
+        ("Empty",         "Solo llegar a la meta — sin obstáculos"),
+        ("Empty8",        "Meta más lejos — planificación básica"),
+        ("FourRooms",     "Navegar entre habitaciones"),
+        ("DoorKey",       "Encontrar llave y abrir puerta"),
+        ("LavaCrossing",  "Evitar lava — planificación con riesgo"),
+    ]
+
+    print(f"\n{'='*60}")
+    print(f"  Variante C: Curriculum Learning MiniGrid")
+    print(f"  {len(curriculum)} niveles de dificultad")
+    print(f"  {timesteps_por_nivel:,} steps por nivel")
+    print(f"  Algoritmo: {algorithm}")
+    print(f"{'='*60}")
+
+    for i, (env_name, desc) in enumerate(curriculum):
+        print(f"  Nivel {i+1}: {env_name} — {desc}")
+    print()
+
+    model = None
+    historial = {}
+
+    for nivel, (env_name, desc) in enumerate(curriculum):
+        print(f"\n--- NIVEL {nivel+1}: {env_name} ---")
+        print(f"Descripción: {desc}")
+
+        env = crear_entorno(env_name, render=False)
+
+        if model is None:
+            # Primer nivel: modelo desde cero con CNN
+            policy_kwargs = {
+                "features_extractor_class": MinigridCNN,
+                "features_extractor_kwargs": {"features_dim": 64}
+            }
+            if algorithm == "PPO":
+                model = PPO(
+                    "CnnPolicy", env,
+                    policy_kwargs=policy_kwargs,
+                    verbose=1,
+                    learning_rate=0.0003,
+                    n_steps=128, batch_size=64,
+                    n_epochs=4, gamma=0.99, ent_coef=0.01,
+                )
+            else:
+                model = DQN(
+                    "CnnPolicy", env,
+                    policy_kwargs=policy_kwargs,
+                    verbose=1,
+                    learning_rate=0.0001,
+                    buffer_size=50000, learning_starts=1000,
+                    batch_size=32, gamma=0.99,
+                )
+        else:
+            # Niveles siguientes: transferir pesos
+            print(f"Transfiriendo pesos del nivel {nivel} al nuevo entorno...")
+            model.set_env(env)
+
+        callback = MinigridCallback()
+        model.learn(
+            total_timesteps=timesteps_por_nivel,
+            callback=callback,
+            progress_bar=True,
+            reset_num_timesteps=(nivel == 0)
+        )
+
+        tasa_exito = np.mean(callback.successes) if callback.successes else 0
+        historial[env_name] = {
+            "rewards": callback.episode_rewards,
+            "successes": callback.successes,
+            "tasa_exito": tasa_exito
+        }
+
+        save_path = f"minigrid_curriculum_nivel{nivel+1}_{env_name.lower()}"
+        model.save(save_path)
+        print(f"Nivel {nivel+1} completado. Tasa de éxito: {tasa_exito*100:.1f}%")
+        print(f"Modelo guardado: {save_path}.zip")
+
+        env.close()
+
+    # Graficar progreso de todos los niveles
+    n_niveles = len(curriculum)
+    fig, axes = plt.subplots(2, n_niveles, figsize=(4*n_niveles, 8))
+
+    for idx, (env_name, desc) in enumerate(curriculum):
+        data = historial.get(env_name, {})
+        rewards = data.get("rewards", [])
+        successes = data.get("successes", [])
+
+        # Recompensas
+        ax_r = axes[0][idx]
+        if rewards:
+            ax_r.plot(rewards, alpha=0.3, color="blue")
+            window = min(20, len(rewards) // 4) if len(rewards) > 4 else 1
+            if window > 1:
+                smoothed = np.convolve(rewards, np.ones(window)/window, mode="valid")
+                ax_r.plot(range(window-1, len(rewards)), smoothed, "r-", linewidth=2)
+        ax_r.set_title(f"Nivel {idx+1}: {env_name}")
+        ax_r.set_ylabel("Recompensa" if idx == 0 else "")
+        ax_r.grid(True, alpha=0.3)
+
+        # Tasa de éxito
+        ax_s = axes[1][idx]
+        if successes:
+            cumsum = np.cumsum(successes)
+            rate = cumsum / (np.arange(len(successes)) + 1)
+            ax_s.plot(rate, "g-", linewidth=2)
+            ax_s.set_ylim(0, 1)
+        ax_s.set_xlabel("Episodio")
+        ax_s.set_ylabel("Tasa de Éxito" if idx == 0 else "")
+        ax_s.grid(True, alpha=0.3)
+
+    plt.suptitle(f"Curriculum Learning — MiniGrid ({algorithm})")
+    plt.tight_layout()
+    plt.savefig("minigrid_curriculum.png", dpi=150)
+    plt.show()
+    print("\nGráfica guardada: minigrid_curriculum.png")
+
+    # Resumen
+    print("\n" + "="*60)
+    print("  RESUMEN CURRICULUM")
+    print("="*60)
+    for nivel, (env_name, _) in enumerate(curriculum):
+        data = historial.get(env_name, {})
+        print(f"  Nivel {nivel+1} ({env_name}): éxito = {data.get('tasa_exito', 0)*100:.1f}%")
+
+    return model, historial
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniGrid - Navegación con RL")
     parser.add_argument("--demo", action="store_true", help="Ver agente entrenado")
     parser.add_argument("--manual", action="store_true", help="Jugar manualmente")
+    parser.add_argument("--curriculum", action="store_true",
+                        help="Variante C: Curriculum learning progresivo")
+    parser.add_argument("--variant", type=str, default="cnn",
+                        choices=["flat", "cnn"],
+                        help=(
+                            "Variante de red:\n"
+                            "  flat - (A) MLP con obs. aplanada (sin estructura espacial)\n"
+                            "  cnn  - (B) CNN personalizada (aprovecha estructura espacial)"
+                        ))
     parser.add_argument("--env", type=str, default="Empty",
                         choices=list(ENTORNOS.keys()), help="Entorno")
     parser.add_argument("--algorithm", type=str, default="PPO",
@@ -416,7 +653,22 @@ if __name__ == "__main__":
         jugar_manual(args.env)
     elif args.demo:
         demo_agente(args.env, n_episodios=args.episodes)
+    elif args.curriculum:
+        curriculum_minigrid(
+            timesteps_por_nivel=args.timesteps // 5,
+            algorithm=args.algorithm
+        )
+    elif args.variant == "flat":
+        print("Variante A: MLP + Observación Plana")
+        model, callback = entrenar_flat(
+            env_name=args.env,
+            timesteps=args.timesteps,
+            algorithm=args.algorithm
+        )
+        plot_training(callback)
+        demo_agente(args.env, n_episodios=3)
     else:
+        print("Variante B: CNN personalizada")
         model, callback = entrenar_minigrid(
             env_name=args.env,
             timesteps=args.timesteps,

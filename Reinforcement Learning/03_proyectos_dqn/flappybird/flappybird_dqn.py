@@ -1,15 +1,27 @@
 """
-Flappy Bird con DQN
-===================
-Entrena un agente para jugar Flappy Bird usando Deep Q-Learning.
+Flappy Bird con DQN/PPO
+========================
+Entrena un agente para jugar Flappy Bird.
+
+VARIANTES:
+  A — DQN + Simple  (--algorithm DQN --simple):  Off-policy, obs. 12D LIDAR
+  B — PPO + Simple  (--algorithm PPO --simple):  On-policy, obs. 12D LIDAR
+  C — DQN + RGB     (--algorithm DQN):           Off-policy, imagen completa
+  D — Comparativa   (--compare-algorithms):      DQN vs PPO, misma obs.
+
+  Comparativa completa (--compare-all): las 4 combinaciones A/B/C/D
 
 Instalación:
     pip install flappy-bird-gymnasium stable-baselines3
 
 Uso:
-    python flappybird_dqn.py              # Entrenar
-    python flappybird_dqn.py --demo       # Ver agente entrenado
-    python flappybird_dqn.py --simple     # Usar observación simplificada
+    python flappybird_dqn.py                          # Entrenar DQN+simple (var. A)
+    python flappybird_dqn.py --algorithm PPO --simple # Entrenar PPO+simple (var. B)
+    python flappybird_dqn.py --algorithm DQN          # Entrenar DQN+RGB (var. C)
+    python flappybird_dqn.py --compare-algorithms     # Var. D: DQN vs PPO
+    python flappybird_dqn.py --compare-all            # Las 4 combinaciones
+    python flappybird_dqn.py --demo                   # Ver agente entrenado
+    python flappybird_dqn.py --manual                 # Jugar manualmente
 """
 
 import argparse
@@ -332,12 +344,177 @@ def jugar_manual():
     env.close()
 
 
+def comparar_algoritmos(timesteps=100000):
+    """
+    Variante D: Comparativa DQN vs PPO con misma observación.
+
+    Compara los dos algoritmos principales usando la misma observación
+    simple (12D LIDAR) para aislar el efecto del algoritmo.
+
+    DQN (off-policy):
+      - Usa replay buffer: aprende de experiencias pasadas
+      - Más eficiente en datos (sample efficiency)
+      - Puede ser inestable con Q-values sobreestimados
+
+    PPO (on-policy):
+      - Aprende solo de experiencias recientes
+      - Más estable por el clipped surrogate objective
+      - Menos eficiente en datos pero más robusto
+
+    Ejecutar: python flappybird_dqn.py --compare-algorithms
+    """
+    print("\n" + "="*60)
+    print("  Variante D: DQN vs PPO — misma observación simple")
+    print("="*60)
+
+    resultados = {}
+
+    for algo in ["DQN", "PPO"]:
+        print(f"\n--- Entrenando {algo} con observación simple ---")
+        model, callback = entrenar_flappy(
+            timesteps=timesteps,
+            algorithm=algo,
+            use_simple_obs=True
+        )
+        resultados[algo] = {
+            "scores": callback.scores,
+            "best": callback.best_score,
+            "rewards": callback.episode_rewards
+        }
+
+    # Graficar
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Scores
+    ax = axes[0]
+    colors = {"DQN": "blue", "PPO": "orange"}
+    for algo, data in resultados.items():
+        scores = data["scores"]
+        if len(scores) > 20:
+            smoothed = np.convolve(scores, np.ones(20)/20, mode="valid")
+            ax.plot(smoothed, color=colors[algo], label=f"{algo} (mejor: {data['best']})")
+    ax.set_xlabel("Episodio")
+    ax.set_ylabel("Score (tubos)")
+    ax.set_title("DQN vs PPO — Scores en Flappy Bird")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Recompensa acumulada
+    ax2 = axes[1]
+    for algo, data in resultados.items():
+        rewards = data["rewards"]
+        if len(rewards) > 20:
+            smoothed = np.convolve(rewards, np.ones(20)/20, mode="valid")
+            ax2.plot(smoothed, color=colors[algo], label=algo)
+    ax2.set_xlabel("Episodio")
+    ax2.set_ylabel("Recompensa")
+    ax2.set_title("Recompensa por episodio (suavizada)")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.suptitle(f"Comparativa DQN vs PPO ({timesteps:,} steps)", fontsize=13)
+    plt.tight_layout()
+    plt.savefig("flappy_comparacion_algoritmos.png", dpi=150)
+    plt.show()
+    print("Gráfica guardada: flappy_comparacion_algoritmos.png")
+
+    # Resumen
+    print("\n" + "="*60)
+    print("  RESULTADOS")
+    print("="*60)
+    for algo, data in resultados.items():
+        scores = data["scores"]
+        if scores:
+            print(f"  {algo}: mejor={data['best']} tubos | media últimos 50ep={np.mean(scores[-50:]) if len(scores) >= 50 else np.mean(scores):.1f}")
+
+    print("\n  Interpretación:")
+    print("  DQN: más sample-efficient (aprende con menos pasos)")
+    print("  PPO: más estable, menos varianza en las curvas")
+
+    return resultados
+
+
+def comparar_todo(timesteps=80000):
+    """
+    Comparativa completa: DQN/PPO × Simple/RGB.
+
+    Entrena las 4 combinaciones posibles:
+      A: DQN + Simple  (más rápido de entrenar)
+      B: PPO + Simple  (más estable)
+      C: DQN + RGB     (más información, pero necesita CNN)
+      D: PPO + RGB     (más lento, más información)
+
+    Permite ver el impacto independiente de: algoritmo y observación.
+
+    Ejecutar: python flappybird_dqn.py --compare-all
+    """
+    print("\n" + "="*60)
+    print("  Comparativa COMPLETA: DQN/PPO × Simple/RGB")
+    print("="*60)
+
+    combinaciones = [
+        ("DQN", True,  "A: DQN + Simple (obs. 12D)"),
+        ("PPO", True,  "B: PPO + Simple (obs. 12D)"),
+        ("DQN", False, "C: DQN + RGB    (imagen)"),
+        ("PPO", False, "D: PPO + RGB    (imagen)"),
+    ]
+
+    resultados = {}
+    for algo, simple, label in combinaciones:
+        print(f"\n--- {label} ---")
+        try:
+            _, callback = entrenar_flappy(
+                timesteps=timesteps,
+                algorithm=algo,
+                use_simple_obs=simple
+            )
+            resultados[label] = {
+                "scores": callback.scores,
+                "best": callback.best_score
+            }
+        except Exception as e:
+            print(f"Error en {label}: {e}")
+            resultados[label] = {"scores": [], "best": 0}
+
+    # Graficar
+    fig, ax = plt.subplots(figsize=(12, 6))
+    colores = {
+        "A: DQN + Simple (obs. 12D)": "blue",
+        "B: PPO + Simple (obs. 12D)": "orange",
+        "C: DQN + RGB    (imagen)":   "green",
+        "D: PPO + RGB    (imagen)":   "red"
+    }
+    for label, data in resultados.items():
+        scores = data["scores"]
+        if len(scores) > 20:
+            smoothed = np.convolve(scores, np.ones(20)/20, mode="valid")
+            ax.plot(smoothed, color=colores.get(label, "gray"),
+                    label=f"{label} (mejor: {data['best']})")
+
+    ax.set_xlabel("Episodio")
+    ax.set_ylabel("Score (tubos pasados)")
+    ax.set_title(f"Comparativa DQN/PPO × Simple/RGB — Flappy Bird ({timesteps:,} steps)")
+    ax.legend(loc="upper left")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig("flappy_comparacion_completa.png", dpi=150)
+    plt.show()
+    print("Gráfica guardada: flappy_comparacion_completa.png")
+
+    return resultados
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flappy Bird con RL")
     parser.add_argument("--demo", action="store_true", help="Ver agente entrenado")
     parser.add_argument("--manual", action="store_true", help="Jugar manualmente")
     parser.add_argument("--compare", action="store_true",
-                        help="Comparar Simple vs RGB")
+                        help="Comparar Simple vs RGB (mismo algoritmo)")
+    parser.add_argument("--compare-algorithms", action="store_true",
+                        help="Variante D: Comparar DQN vs PPO (misma observación simple)")
+    parser.add_argument("--compare-all", action="store_true",
+                        help="Comparar las 4 combinaciones: DQN/PPO × Simple/RGB")
     parser.add_argument("--simple", action="store_true",
                         help="Usar observación simple (recomendado)")
     parser.add_argument("--algorithm", type=str, default="DQN",
@@ -358,11 +535,15 @@ if __name__ == "__main__":
         demo_flappy(model_path, args.episodes, args.simple)
     elif args.compare:
         comparar_observaciones(args.timesteps)
+    elif args.compare_algorithms:
+        comparar_algoritmos(args.timesteps)
+    elif args.compare_all:
+        comparar_todo(args.timesteps)
     else:
         model, callback = entrenar_flappy(
             timesteps=args.timesteps,
             algorithm=args.algorithm,
-            use_simple_obs=args.simple or True  # Simple por defecto
+            use_simple_obs=args.simple or True
         )
         plot_training(callback)
         demo_flappy(n_episodios=3, use_simple_obs=args.simple or True)

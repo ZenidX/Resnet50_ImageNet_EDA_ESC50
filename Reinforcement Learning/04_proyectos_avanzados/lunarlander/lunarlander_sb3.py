@@ -3,13 +3,24 @@ LunarLander con Stable-Baselines3
 =================================
 Ejemplo completo de entrenamiento y visualización.
 
+VARIANTES:
+  A — PPO    (--algorithm PPO):    On-policy, política estocástica, robusto
+  B — DQN    (--algorithm DQN):    Off-policy, acciones discretas, eficiente
+  C — A2C    (--algorithm A2C):    Actor-Critic síncrono, más simple que PPO
+  D — SAC/TD3 (--continuous):      Entorno continuo, control preciso de motores
+
 Instalación:
     pip install stable-baselines3 gymnasium[box2d]
 
 Uso:
-    python lunarlander_sb3.py              # Entrenar desde cero
-    python lunarlander_sb3.py --demo       # Ver agente entrenado
-    python lunarlander_sb3.py --episodes 200  # Entrenar más episodios
+    python lunarlander_sb3.py                         # Entrenar PPO (var. A)
+    python lunarlander_sb3.py --algorithm DQN         # Entrenar DQN (var. B)
+    python lunarlander_sb3.py --algorithm A2C         # Entrenar A2C (var. C)
+    python lunarlander_sb3.py --continuous            # Entrenar SAC continuo (var. D)
+    python lunarlander_sb3.py --continuous --algorithm TD3  # TD3 continuo
+    python lunarlander_sb3.py --compare               # Comparar A vs B vs C
+    python lunarlander_sb3.py --compare-cont          # Discreto vs Continuo
+    python lunarlander_sb3.py --demo                  # Ver agente entrenado
 """
 
 import argparse
@@ -18,7 +29,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Stable-Baselines3
-from stable_baselines3 import PPO, DQN, A2C
+from stable_baselines3 import PPO, DQN, A2C, SAC, TD3
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
@@ -301,12 +312,135 @@ def comparar_algoritmos(timesteps=50000):
     return resultados
 
 
+def entrenar_continuo(algoritmo="SAC", timesteps=100000, save_path=None):
+    """
+    Variante D: LunarLander con espacio de acciones CONTINUO.
+
+    En lugar de elegir entre 4 acciones discretas, el agente controla
+    directamente la potencia de cada motor con valores continuos:
+      - Motor principal: valor en [-1, 1] (negativo = apagado)
+      - Motor lateral:   valor en [-1, 1]
+
+    Esto requiere algoritmos para espacios continuos:
+      - SAC (Soft Actor-Critic): maximiza entropía, muy explorador
+      - TD3 (Twin Delayed DDPG): más estable, reduce sobreestimación
+
+    Diferencia clave vs discreto:
+      El agente tiene control preciso (puede aplicar 30% de potencia)
+      en lugar de solo on/off. Más difícil de aprender pero más natural.
+
+    Ejecutar: python lunarlander_sb3.py --continuous --algorithm SAC
+    """
+    if save_path is None:
+        save_path = f"lunarlander_continuo_{algoritmo.lower()}"
+
+    print(f"\n{'='*60}")
+    print(f"  Variante D: LunarLander CONTINUO con {algoritmo}")
+    print(f"  Entorno: LunarLanderContinuous-v3")
+    print(f"  Acciones: [potencia_principal, potencia_lateral] ∈ [-1, 1]²")
+    print(f"  Timesteps: {timesteps:,}")
+    print(f"{'='*60}\n")
+
+    env = gym.make("LunarLanderContinuous-v3")
+    env = Monitor(env)
+
+    if algoritmo == "SAC":
+        model = SAC(
+            "MlpPolicy",
+            env,
+            verbose=1,
+            learning_rate=3e-4,
+            buffer_size=100000,
+            learning_starts=1000,
+            batch_size=256,
+            gamma=0.99,
+            tau=0.005,
+            ent_coef="auto",  # Entropía adaptativa
+            tensorboard_log="./logs/"
+        )
+    elif algoritmo == "TD3":
+        model = TD3(
+            "MlpPolicy",
+            env,
+            verbose=1,
+            learning_rate=3e-4,
+            buffer_size=100000,
+            learning_starts=1000,
+            batch_size=256,
+            gamma=0.99,
+            tau=0.005,
+            policy_delay=2,  # Actualizar actor cada 2 pasos del crítico
+            tensorboard_log="./logs/"
+        )
+    else:
+        raise ValueError(f"Para acciones continuas usa SAC o TD3, no {algoritmo}")
+
+    callback = RewardLoggerCallback()
+    model.learn(total_timesteps=timesteps, callback=callback, progress_bar=True)
+
+    model.save(save_path)
+    print(f"\nModelo guardado en: {save_path}.zip")
+
+    env.close()
+    return model, callback
+
+
+def comparar_discreto_vs_continuo(timesteps=50000):
+    """
+    Compara la dificultad de aprender en el espacio discreto vs continuo.
+
+    Entrena PPO en discreto y SAC en continuo, luego grafica las curvas
+    de aprendizaje. El continuo suele tardar más en converger pero
+    tiene potencial de obtener mejor política final.
+    """
+    print("\n" + "="*60)
+    print("  Discreto (PPO) vs Continuo (SAC)")
+    print("="*60)
+
+    resultados = {}
+
+    print("\n--- Entrenando PPO en discreto ---")
+    _, cb_discreto = entrenar_lunarlander("PPO", timesteps, "lunarlander_ppo_disc")
+    resultados["PPO (Discreto)"] = cb_discreto.episode_rewards
+
+    print("\n--- Entrenando SAC en continuo ---")
+    _, cb_continuo = entrenar_continuo("SAC", timesteps, "lunarlander_sac_cont")
+    resultados["SAC (Continuo)"] = cb_continuo.episode_rewards
+
+    # Graficar
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for nombre, rewards in resultados.items():
+        if rewards:
+            window = min(30, len(rewards) // 4) if len(rewards) > 4 else 1
+            if window > 1:
+                smoothed = np.convolve(rewards, np.ones(window)/window, mode='valid')
+                ax.plot(smoothed, label=nombre)
+
+    ax.axhline(y=200, color='green', linestyle='--', alpha=0.5, label='Meta (200)')
+    ax.set_xlabel('Episodio')
+    ax.set_ylabel('Recompensa (suavizada)')
+    ax.set_title('Discreto vs Continuo — LunarLander')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig("lunarlander_discreto_vs_continuo.png", dpi=150)
+    plt.show()
+    print("\nGráfica guardada: lunarlander_discreto_vs_continuo.png")
+    return resultados
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LunarLander con Stable-Baselines3")
     parser.add_argument("--demo", action="store_true", help="Ver agente entrenado")
     parser.add_argument("--compare", action="store_true", help="Comparar PPO, DQN, A2C")
+    parser.add_argument("--continuous", action="store_true",
+                        help="Variante D: Usar LunarLanderContinuous-v3 (acciones continuas)")
+    parser.add_argument("--compare-cont", action="store_true",
+                        help="Comparar discreto (PPO) vs continuo (SAC)")
     parser.add_argument("--algorithm", type=str, default="PPO",
-                        choices=["PPO", "DQN", "A2C"], help="Algoritmo a usar")
+                        choices=["PPO", "DQN", "A2C", "SAC", "TD3"],
+                        help="Algoritmo (SAC/TD3 solo para --continuous)")
     parser.add_argument("--timesteps", type=int, default=100000,
                         help="Timesteps de entrenamiento")
     parser.add_argument("--episodes", type=int, default=5,
@@ -319,6 +453,13 @@ if __name__ == "__main__":
         demo_agente(n_episodios=args.episodes)
     elif args.compare:
         comparar_algoritmos(timesteps=args.timesteps)
+    elif args.continuous:
+        # Variante D: entorno continuo
+        algo = args.algorithm if args.algorithm in ["SAC", "TD3"] else "SAC"
+        model, callback = entrenar_continuo(algoritmo=algo, timesteps=args.timesteps)
+        plot_training(callback, save_path=f"lunarlander_continuo_{algo.lower()}.png")
+    elif args.compare_cont:
+        comparar_discreto_vs_continuo(timesteps=args.timesteps)
     else:
         model, callback = entrenar_lunarlander(
             algoritmo=args.algorithm,

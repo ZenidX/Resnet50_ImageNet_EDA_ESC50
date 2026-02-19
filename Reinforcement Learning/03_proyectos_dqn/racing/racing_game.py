@@ -5,11 +5,20 @@ Racing Game con Múltiples Agentes RL
 Un juego de carreras donde varios coches (agentes) compiten simultáneamente.
 Cada coche aprende a evitar obstáculos y mantenerse en la pista.
 
+VARIANTES DE ENTRENAMIENTO:
+  A — Independientes (--variant independent): Cada agente tiene su propia red
+  B — Red Compartida (--variant shared): Todos comparten una red y buffer
+  C — Maestro-Alumno (--variant master_student): Transfer learning entre agentes
+  D — Competitivo (--variant competitive): Recompensas por posición en carrera
+
 Ejecutar:
-    python racing_game.py                    # Ver 4 agentes aleatorios
-    python racing_game.py --train            # Entrenar agentes
-    python racing_game.py --demo             # Ver agentes entrenados
-    python racing_game.py --cars 8           # Número de coches
+    python racing_game.py                              # Ver 4 agentes aleatorios
+    python racing_game.py --train                      # Entrenar (var. A por defecto)
+    python racing_game.py --train --variant shared     # Entrenar var. B
+    python racing_game.py --train --variant master_student  # Entrenar var. C
+    python racing_game.py --train --variant competitive     # Entrenar var. D
+    python racing_game.py --demo                       # Ver agentes entrenados
+    python racing_game.py --cars 8                     # Número de coches
 
 Controles:
     ESC: Salir
@@ -505,6 +514,87 @@ if TORCH_AVAILABLE:
         def decay_epsilon(self):
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
+        def save(self, path):
+            torch.save(self.q_network.state_dict(), path)
+
+        def load(self, path):
+            self.q_network.load_state_dict(torch.load(path, map_location=self.device))
+            self.target_network.load_state_dict(self.q_network.state_dict())
+
+
+    class SharedCarAgent:
+        """
+        Variante B: Red neuronal compartida entre todos los agentes.
+
+        A diferencia de la Variante A donde cada coche tiene su propia red,
+        aquí TODOS los coches usan la misma red neuronal y contribuyen
+        al mismo replay buffer. Esto acelera el aprendizaje porque el agente
+        "ve" 4x más experiencias por episodio.
+
+        Concepto: Centralized Training (entrenamiento centralizado)
+        """
+        def __init__(self, n_agents=4, state_size=6, n_actions=9):
+            self.n_agents = n_agents
+            self.n_actions = n_actions
+            self.gamma = 0.95
+            self.epsilon = 1.0
+            self.epsilon_min = 0.05
+            self.epsilon_decay = 0.995
+
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            # UNA SOLA red para todos los agentes
+            self.q_network = CarDQN(state_size, n_actions).to(self.device)
+            self.target_network = CarDQN(state_size, n_actions).to(self.device)
+            self.target_network.load_state_dict(self.q_network.state_dict())
+
+            self.optimizer = optim.Adam(self.q_network.parameters(), lr=0.001)
+            self.memory = deque(maxlen=50000)  # Buffer compartido
+            self.batch_size = 32
+
+        def act(self, state):
+            if random.random() < self.epsilon:
+                return random.randint(0, self.n_actions - 1)
+            with torch.no_grad():
+                state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+                return self.q_network(state_t).argmax().item()
+
+        def remember(self, state, action, reward, next_state, done):
+            self.memory.append((state, action, reward, next_state, done))
+
+        def replay(self):
+            if len(self.memory) < self.batch_size:
+                return 0
+            batch = random.sample(self.memory, self.batch_size)
+            states, actions, rewards, next_states, dones = zip(*batch)
+            states_t = torch.FloatTensor(np.array(states)).to(self.device)
+            actions_t = torch.LongTensor(actions).to(self.device)
+            rewards_t = torch.FloatTensor(rewards).to(self.device)
+            next_states_t = torch.FloatTensor(np.array(next_states)).to(self.device)
+            dones_t = torch.FloatTensor(dones).to(self.device)
+            q_values = self.q_network(states_t).gather(1, actions_t.unsqueeze(1)).squeeze()
+            with torch.no_grad():
+                next_q = self.target_network(next_states_t).max(1)[0]
+                target = rewards_t + (1 - dones_t) * self.gamma * next_q
+            loss = nn.MSELoss()(q_values, target)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            return loss.item()
+
+        def update_target(self):
+            self.target_network.load_state_dict(self.q_network.state_dict())
+
+        def decay_epsilon(self):
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+        def save(self, path):
+            torch.save(self.q_network.state_dict(), path)
+
+        def load(self, path):
+            self.q_network.load_state_dict(torch.load(path, map_location=self.device))
+            self.target_network.load_state_dict(self.q_network.state_dict())
+
 
 def run_random(n_cars=4):
     """Ejecuta con agentes aleatorios para demostración."""
@@ -662,16 +752,307 @@ def demo_agents(n_cars=4):
     game.close()
 
 
+def train_shared(n_cars=4, episodes=200):
+    """
+    Variante B: Entrena con red neuronal compartida.
+
+    Todos los coches usan la misma red. Cada experiencia de cualquier
+    coche va al mismo buffer y entrena la misma red. Converge más
+    rápido porque acumula experiencias más rápidamente.
+
+    Ejecutar: python racing_game.py --train --variant shared
+    """
+    if not TORCH_AVAILABLE:
+        print("Error: PyTorch no disponible")
+        return
+
+    print(f"=== VARIANTE B: RED COMPARTIDA — {n_cars} Coches ===")
+    print("Concepto: Todos los coches aprenden de las mismas experiencias")
+    print(f"Episodios: {episodes}\n")
+
+    game = RacingGame(n_cars=n_cars, render=True)
+    shared_agent = SharedCarAgent(n_agents=n_cars)
+
+    best_fitness = 0
+
+    for ep in range(episodes):
+        states = game.reset()
+        step_count = 0
+        max_steps = 2000
+
+        while step_count < max_steps:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    shared_agent.save("car_shared.pth")
+                    game.close()
+                    return
+
+            # Todos usan la misma red para decidir
+            actions = [shared_agent.act(state) for state in states]
+            next_states, rewards, dones, all_done = game.step(actions)
+
+            # Todas las experiencias van al mismo buffer
+            for i in range(n_cars):
+                shared_agent.remember(states[i], actions[i], rewards[i], next_states[i], dones[i])
+
+            # Un solo paso de entrenamiento por timestep
+            shared_agent.replay()
+
+            states = next_states
+            step_count += 1
+
+            if step_count % 3 == 0:
+                game.render()
+                game.clock.tick(120)
+
+            if all_done:
+                break
+
+        shared_agent.decay_epsilon()
+        if ep % 10 == 0:
+            shared_agent.update_target()
+
+        best_ep_fitness = max(car.fitness for car in game.cars)
+        if best_ep_fitness > best_fitness:
+            best_fitness = best_ep_fitness
+
+        if (ep + 1) % 10 == 0:
+            avg_fitness = np.mean([car.fitness for car in game.cars])
+            print(f"Ep {ep+1:3d} | Avg Fitness: {avg_fitness:.0f} | "
+                  f"Best: {best_fitness:.0f} | eps: {shared_agent.epsilon:.3f}")
+
+    shared_agent.save("car_shared.pth")
+    print("\nVariante B completada. Modelo: car_shared.pth")
+    game.close()
+
+
+def train_master_student(n_cars=4, master_episodes=100, student_episodes=100):
+    """
+    Variante C: Maestro-Alumno (Transfer Learning entre agentes).
+
+    Fase 1: Un agente maestro entrena solo durante master_episodes.
+    Fase 2: Los demás agentes copian los pesos del maestro y refinan.
+
+    Este enfoque muestra transferencia de conocimiento: los alumnos
+    no empiezan desde cero sino desde una política ya aprendida.
+
+    Ejecutar: python racing_game.py --train --variant master_student
+    """
+    if not TORCH_AVAILABLE:
+        print("Error: PyTorch no disponible")
+        return
+
+    print("=== VARIANTE C: MAESTRO-ALUMNO ===")
+    print(f"Fase 1: Maestro entrena {master_episodes} episodios")
+    print(f"Fase 2: {n_cars-1} alumnos copian pesos y refinan {student_episodes} episodios\n")
+
+    # --- FASE 1: El maestro aprende solo ---
+    print("--- FASE 1: Entrenando al maestro ---")
+    game = RacingGame(n_cars=1, render=True)
+    master = CarAgent(0)
+
+    for ep in range(master_episodes):
+        states = game.reset()
+        step_count = 0
+        while step_count < 2000:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    game.close()
+                    return
+            actions = [master.act(states[0])]
+            next_states, rewards, dones, all_done = game.step(actions)
+            master.remember(states[0], actions[0], rewards[0], next_states[0], dones[0])
+            master.replay()
+            states = next_states
+            step_count += 1
+            if step_count % 3 == 0:
+                game.render()
+                game.clock.tick(120)
+            if all_done:
+                break
+        master.decay_epsilon()
+        if ep % 10 == 0:
+            master.update_target()
+        if (ep + 1) % 20 == 0:
+            print(f"  Maestro Ep {ep+1}: fitness={game.cars[0].fitness:.0f}, eps={master.epsilon:.3f}")
+
+    torch.save(master.q_network.state_dict(), "car_master.pth")
+    print(f"\nMaestro entrenado. Fitness final: {game.cars[0].fitness:.0f}")
+    game.close()
+
+    # --- FASE 2: Los alumnos copian al maestro ---
+    print(f"\n--- FASE 2: {n_cars} alumnos aprenden del maestro ---")
+    game = RacingGame(n_cars=n_cars, render=True)
+    students = []
+    for i in range(n_cars):
+        student = CarAgent(i)
+        # Copiar pesos del maestro
+        student.q_network.load_state_dict(master.q_network.state_dict())
+        student.target_network.load_state_dict(master.q_network.state_dict())
+        student.epsilon = 0.3  # Exploración reducida: ya saben algo
+        students.append(student)
+    print("Pesos del maestro copiados a todos los alumnos.")
+
+    best_fitness = [0] * n_cars
+    for ep in range(student_episodes):
+        states = game.reset()
+        step_count = 0
+        while step_count < 2000:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    for i, s in enumerate(students):
+                        torch.save(s.q_network.state_dict(), f"car_student_{i}.pth")
+                    game.close()
+                    return
+            actions = [s.act(st) for s, st in zip(students, states)]
+            next_states, rewards, dones, all_done = game.step(actions)
+            for i, student in enumerate(students):
+                student.remember(states[i], actions[i], rewards[i], next_states[i], dones[i])
+                student.replay()
+            states = next_states
+            step_count += 1
+            if step_count % 3 == 0:
+                game.render()
+                game.clock.tick(120)
+            if all_done:
+                break
+        for i, student in enumerate(students):
+            student.decay_epsilon()
+            if ep % 10 == 0:
+                student.update_target()
+            if game.cars[i].fitness > best_fitness[i]:
+                best_fitness[i] = game.cars[i].fitness
+        if (ep + 1) % 20 == 0:
+            avg = np.mean([car.fitness for car in game.cars])
+            print(f"Alumnos Ep {ep+1:3d} | Avg: {avg:.0f} | Best: {max(best_fitness):.0f}")
+
+    for i, student in enumerate(students):
+        torch.save(student.q_network.state_dict(), f"car_student_{i}.pth")
+    print("\nVariante C completada.")
+    game.close()
+
+
+def train_competitive(n_cars=4, episodes=200):
+    """
+    Variante D: Entrenamiento competitivo con recompensas por ranking.
+
+    La recompensa no solo depende de sobrevivir y avanzar, sino de
+    la posición relativa respecto a los otros coches. El primero
+    recibe bonus, el último recibe penalización adicional.
+
+    Esto introduce competencia explícita entre los agentes.
+
+    Ejecutar: python racing_game.py --train --variant competitive
+    """
+    if not TORCH_AVAILABLE:
+        print("Error: PyTorch no disponible")
+        return
+
+    print(f"=== VARIANTE D: COMPETITIVO — {n_cars} Coches ===")
+    print("Concepto: Recompensa relativa por posición en carrera")
+    print(f"Episodios: {episodes}\n")
+
+    game = RacingGame(n_cars=n_cars, render=True)
+    agents = [CarAgent(i) for i in range(n_cars)]
+    best_fitness = [0] * n_cars
+
+    for ep in range(episodes):
+        states = game.reset()
+        step_count = 0
+        max_steps = 2000
+
+        while step_count < max_steps:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    for i, agent in enumerate(agents):
+                        torch.save(agent.q_network.state_dict(), f"car_competitive_{i}.pth")
+                    game.close()
+                    return
+
+            actions = [agent.act(state) for agent, state in zip(agents, states)]
+
+            # Guardar distancia antes del step
+            old_distances = [car.distance for car in game.cars]
+            next_states, base_rewards, dones, all_done = game.step(actions)
+
+            # Calcular ranking (por fitness, mayor es mejor posición)
+            alive_indices = [i for i, car in enumerate(game.cars) if car.alive]
+            fitnesses = [game.cars[i].fitness for i in alive_indices]
+
+            # Recompensas competitivas
+            competitive_rewards = list(base_rewards)
+            if len(alive_indices) > 1:
+                sorted_alive = sorted(alive_indices, key=lambda i: game.cars[i].fitness, reverse=True)
+                n_alive = len(sorted_alive)
+                for rank, idx in enumerate(sorted_alive):
+                    # Bonus por posición: líder +0.5, último -0.5
+                    rank_bonus = 0.5 * (1 - 2 * rank / max(n_alive - 1, 1))
+                    competitive_rewards[idx] += rank_bonus
+
+            for i, agent in enumerate(agents):
+                agent.remember(states[i], actions[i], competitive_rewards[i], next_states[i], dones[i])
+                agent.replay()
+
+            states = next_states
+            step_count += 1
+
+            if step_count % 3 == 0:
+                game.render()
+                game.clock.tick(120)
+
+            if all_done:
+                break
+
+        for i, agent in enumerate(agents):
+            agent.decay_epsilon()
+            if ep % 10 == 0:
+                agent.update_target()
+            if game.cars[i].fitness > best_fitness[i]:
+                best_fitness[i] = game.cars[i].fitness
+
+        if (ep + 1) % 10 == 0:
+            avg_fitness = np.mean([car.fitness for car in game.cars])
+            print(f"Ep {ep+1:3d} | Avg Fitness: {avg_fitness:.0f} | "
+                  f"Best: {max(best_fitness):.0f} | eps: {agents[0].epsilon:.3f}")
+
+    for i, agent in enumerate(agents):
+        torch.save(agent.q_network.state_dict(), f"car_competitive_{i}.pth")
+    print("\nVariante D completada.")
+    game.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Racing Game con RL")
     parser.add_argument("--train", action="store_true", help="Entrenar agentes")
     parser.add_argument("--demo", action="store_true", help="Ver agentes entrenados")
     parser.add_argument("--cars", type=int, default=4, help="Número de coches")
     parser.add_argument("--episodes", type=int, default=200, help="Episodios de entrenamiento")
+    parser.add_argument("--variant", type=str, default="independent",
+                        choices=["independent", "shared", "master_student", "competitive"],
+                        help=(
+                            "Variante de entrenamiento:\n"
+                            "  independent   - (A) 4 redes separadas, aprenden por separado\n"
+                            "  shared        - (B) 1 red compartida, buffer común\n"
+                            "  master_student- (C) Maestro entrena, alumnos copian y refinan\n"
+                            "  competitive   - (D) Recompensa por posición relativa en carrera"
+                        ))
     args = parser.parse_args()
 
     if args.train:
-        train_agents(n_cars=args.cars, episodes=args.episodes)
+        if args.variant == "independent":
+            print("Variante A: Agentes Independientes")
+            train_agents(n_cars=args.cars, episodes=args.episodes)
+        elif args.variant == "shared":
+            print("Variante B: Red Compartida")
+            train_shared(n_cars=args.cars, episodes=args.episodes)
+        elif args.variant == "master_student":
+            print("Variante C: Maestro-Alumno")
+            train_master_student(n_cars=args.cars,
+                                 master_episodes=args.episodes // 2,
+                                 student_episodes=args.episodes // 2)
+        elif args.variant == "competitive":
+            print("Variante D: Competitivo")
+            train_competitive(n_cars=args.cars, episodes=args.episodes)
     elif args.demo:
         demo_agents(n_cars=args.cars)
     else:

@@ -2,9 +2,16 @@
 Nibbler (Snake) con Visualización Pygame + Reinforcement Learning
 ==================================================================
 
+VARIANTES DE ENTRENAMIENTO:
+  A -- Estándar   (--variant standard):  DQN básico, reward por comida/muerte
+  B -- Shaping    (--variant shaped):    Penaliza bucles, premia exploración
+  C -- Curiosidad (--variant curiosity): Bonus intrínseco por estados nuevos
+
 Ejecutar:
     python nibbler_game.py              # Jugar manualmente
-    python nibbler_game.py --train      # Entrenar agente DQN
+    python nibbler_game.py --train      # Entrenar agente (variante A por defecto)
+    python nibbler_game.py --train --variant shaped    # Entrenar variante B
+    python nibbler_game.py --train --variant curiosity # Entrenar variante C
     python nibbler_game.py --demo       # Ver agente entrenado
 
 Controles manuales:
@@ -295,6 +302,60 @@ if TORCH_AVAILABLE:
             self.epsilon = checkpoint.get('epsilon', 0.01)
 
 
+if TORCH_AVAILABLE:
+    class CuriosityModule(nn.Module):
+        """
+        Módulo de Curiosidad Intrínseca (Intrinsic Curiosity Module - ICM).
+
+        Aprende a predecir el siguiente estado dado el estado actual y la acción.
+        El error de predicción sirve como recompensa intrínseca: cuanto más
+        sorprendente es la transición (estado poco visto), mayor la recompensa.
+
+        Referencia: Pathak et al., 2017 - "Curiosity-driven Exploration"
+        """
+        def __init__(self, state_size=12, n_actions=4, hidden=64):
+            super().__init__()
+            # Modelo de transición: predice next_state dado (state, action)
+            self.forward_model = nn.Sequential(
+                nn.Linear(state_size + n_actions, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, state_size)
+            )
+            self.optimizer = optim.Adam(self.parameters(), lr=0.001)
+
+        def predict(self, state, action_onehot):
+            """Predice el siguiente estado."""
+            x = torch.cat([state, action_onehot], dim=-1)
+            return self.forward_model(x)
+
+        def intrinsic_reward(self, state, action, next_state, n_actions=4):
+            """
+            Calcula la recompensa intrínseca como error de predicción.
+            Mayor error = estado más sorprendente = mayor curiosidad.
+            """
+            with torch.no_grad():
+                state_t = torch.FloatTensor(state).unsqueeze(0)
+                next_state_t = torch.FloatTensor(next_state).unsqueeze(0)
+                action_onehot = torch.zeros(1, n_actions)
+                action_onehot[0, action] = 1.0
+                predicted = self.predict(state_t, action_onehot)
+                error = torch.mean((predicted - next_state_t) ** 2).item()
+            return error  # Error = recompensa intrínseca
+
+        def train_step(self, state, action, next_state, n_actions=4):
+            """Actualiza el modelo de transición."""
+            state_t = torch.FloatTensor(state).unsqueeze(0)
+            next_state_t = torch.FloatTensor(next_state).unsqueeze(0)
+            action_onehot = torch.zeros(1, n_actions)
+            action_onehot[0, action] = 1.0
+            predicted = self.predict(state_t, action_onehot)
+            loss = nn.MSELoss()(predicted, next_state_t)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            return loss.item()
+
+
 def play_manual():
     """Modo de juego manual con flechas."""
     game = NibblerGame(grid_size=GRID_SIZE)
@@ -453,15 +514,230 @@ def demo_agent():
     game.close()
 
 
+def train_shaped(episodes=500, render_every=50):
+    """
+    Variante B: Entrenamiento con Reward Shaping.
+
+    El reward shaping modifica la función de recompensa para guiar
+    mejor al agente. En lugar de solo premiar comer y penalizar morir,
+    añadimos señales que desalientan comportamientos no deseados:
+    - Penalizar dar vueltas en círculos (visitar posiciones repetidas)
+    - Penalizar quedarse sin comer durante mucho tiempo
+    - Premiar explorar celdas no visitadas antes
+
+    Clave: El reward shaping NO cambia la política óptima si se diseña
+    correctamente (potential-based shaping), pero puede acelerar enormemente
+    el aprendizaje inicial.
+
+    Ejecutar: python nibbler_game.py --train --variant shaped
+    """
+    if not TORCH_AVAILABLE:
+        print("Error: PyTorch no disponible")
+        return
+
+    print("=== VARIANTE B: REWARD SHAPING ===")
+    print("Penaliza bucles, premia exploración")
+    print(f"Episodios: {episodes}\n")
+
+    agent = DQNAgent()
+    scores = []
+    best_score = 0
+    recent_positions = deque(maxlen=20)  # Para detectar bucles
+
+    for ep in range(episodes):
+        render = (ep % render_every == 0)
+        game = NibblerGame(grid_size=GRID_SIZE, render=render)
+        state = game.reset()
+
+        visited_cells = set()
+        visited_cells.add(game.snake[0])
+        steps_since_food = 0
+        total_reward = 0
+        recent_positions.clear()
+
+        while not game.game_over:
+            if render:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        game.close()
+                        agent.save("nibbler_shaped.pth")
+                        return agent, scores
+
+            action = agent.act(state)
+            next_state, base_reward, done = game.step(action)
+
+            head = game.snake[0]
+
+            # --- Reward Shaping ---
+            shaped_reward = base_reward
+
+            if base_reward == 10:
+                # Comió: resetear contador y limpiar celdas visitadas
+                steps_since_food = 0
+                visited_cells = set(game.snake)
+            elif not done:
+                steps_since_food += 1
+
+                # Penalizar bucles: posición repetida recientemente
+                if head in recent_positions:
+                    shaped_reward -= 2.0
+
+                # Penalizar no comer durante mucho tiempo
+                if steps_since_food > 50:
+                    shaped_reward -= 0.5
+
+                # Premiar explorar celdas nuevas
+                if head not in visited_cells:
+                    shaped_reward += 0.2
+                    visited_cells.add(head)
+
+            recent_positions.append(head)
+
+            agent.remember(state, action, shaped_reward, next_state, done)
+            agent.replay()
+            state = next_state
+            total_reward += shaped_reward
+
+            if render:
+                game.render()
+                game.clock.tick(30)
+
+        agent.decay_epsilon()
+        if ep % 10 == 0:
+            agent.update_target()
+
+        scores.append(game.score)
+        if game.score > best_score:
+            best_score = game.score
+            agent.save("nibbler_shaped_best.pth")
+
+        if (ep + 1) % 10 == 0:
+            avg = np.mean(scores[-50:]) if len(scores) >= 50 else np.mean(scores)
+            print(f"Ep {ep+1:4d} | Score: {game.score:2d} | Avg: {avg:.1f} | "
+                  f"Best: {best_score} | eps: {agent.epsilon:.3f}")
+
+        if render:
+            game.close()
+
+    agent.save("nibbler_shaped.pth")
+    print(f"\nVariante B completada. Mejor score: {best_score}")
+    return agent, scores
+
+
+def train_curiosity(episodes=500, render_every=50, curiosity_scale=0.5):
+    """
+    Variante C: Entrenamiento con Curiosidad Intrínseca.
+
+    Añade un módulo de curiosidad que genera recompensa extra cuando
+    el agente visita estados poco frecuentes o sorprendentes.
+
+    El módulo aprende a predecir el siguiente estado. Cuando falla
+    mucho en su predicción (estado raro/nuevo), da una recompensa
+    adicional al agente por "explorar lo desconocido".
+
+    Resultado: El agente tiende a explorar todo el tablero antes de
+    centrarse solo en buscar comida.
+
+    Ejecutar: python nibbler_game.py --train --variant curiosity
+    """
+    if not TORCH_AVAILABLE:
+        print("Error: PyTorch no disponible")
+        return
+
+    print("=== VARIANTE C: CURIOSIDAD INTRÍNSECA ===")
+    print("El agente recibe bonus por explorar estados nuevos")
+    print(f"Escala de curiosidad: {curiosity_scale}")
+    print(f"Episodios: {episodes}\n")
+
+    agent = DQNAgent()
+    curiosity = CuriosityModule(state_size=12, n_actions=4)
+    scores = []
+    best_score = 0
+    intrinsic_rewards_history = []
+
+    for ep in range(episodes):
+        render = (ep % render_every == 0)
+        game = NibblerGame(grid_size=GRID_SIZE, render=render)
+        state = game.reset()
+        total_intrinsic = 0
+
+        while not game.game_over:
+            if render:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        game.close()
+                        agent.save("nibbler_curiosity.pth")
+                        return agent, scores
+
+            action = agent.act(state)
+            next_state, extrinsic_reward, done = game.step(action)
+
+            # Recompensa intrínseca por curiosidad
+            intrinsic = curiosity.intrinsic_reward(state, action, next_state)
+            total_reward = extrinsic_reward + curiosity_scale * intrinsic
+            total_intrinsic += intrinsic
+
+            # Entrenar módulo de curiosidad
+            curiosity.train_step(state, action, next_state)
+
+            agent.remember(state, action, total_reward, next_state, done)
+            agent.replay()
+            state = next_state
+
+            if render:
+                game.render()
+                game.clock.tick(30)
+
+        agent.decay_epsilon()
+        if ep % 10 == 0:
+            agent.update_target()
+
+        scores.append(game.score)
+        intrinsic_rewards_history.append(total_intrinsic)
+
+        if game.score > best_score:
+            best_score = game.score
+            agent.save("nibbler_curiosity_best.pth")
+
+        if (ep + 1) % 10 == 0:
+            avg = np.mean(scores[-50:]) if len(scores) >= 50 else np.mean(scores)
+            avg_intr = np.mean(intrinsic_rewards_history[-10:])
+            print(f"Ep {ep+1:4d} | Score: {game.score:2d} | Avg: {avg:.1f} | "
+                  f"Best: {best_score} | Intrínseca: {avg_intr:.3f} | eps: {agent.epsilon:.3f}")
+
+        if render:
+            game.close()
+
+    agent.save("nibbler_curiosity.pth")
+    print(f"\nVariante C completada. Mejor score: {best_score}")
+    return agent, scores, intrinsic_rewards_history
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Nibbler con RL")
     parser.add_argument("--train", action="store_true", help="Entrenar agente")
     parser.add_argument("--demo", action="store_true", help="Ver agente entrenado")
     parser.add_argument("--episodes", type=int, default=500, help="Episodios de entrenamiento")
+    parser.add_argument("--variant", type=str, default="standard",
+                        choices=["standard", "shaped", "curiosity"],
+                        help=(
+                            "Variante de entrenamiento:\n"
+                            "  standard  - (A) DQN con reward básico\n"
+                            "  shaped    - (B) Reward shaping: penaliza bucles, premia exploración\n"
+                            "  curiosity - (C) Curiosidad intrínseca: bonus por estados nuevos"
+                        ))
     args = parser.parse_args()
 
     if args.train:
-        train_agent(episodes=args.episodes)
+        if args.variant == "standard":
+            print("Variante A: DQN Estándar")
+            train_agent(episodes=args.episodes)
+        elif args.variant == "shaped":
+            print("Variante B: Reward Shaping")
+            train_shaped(episodes=args.episodes)
+        elif args.variant == "curiosity":
+            print("Variante C: Curiosidad Intrínseca")
+            train_curiosity(episodes=args.episodes)
     elif args.demo:
         demo_agent()
     else:
